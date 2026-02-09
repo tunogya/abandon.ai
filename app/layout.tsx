@@ -29,6 +29,7 @@ export default function RootLayout({
       lang="en"
       className={` ${geistSans.variable} ${geistMono.variable} ${GeistPixelSquare.variable} ${GeistPixelCircle.variable} ${GeistPixelLine.variable} ${GeistPixelTriangle.variable} ${GeistPixelGrid.variable}`}
     >
+      <link rel="icon" href="/favicon.ico" sizes="any" />
       <body>{children}</body>
     </html>
   );

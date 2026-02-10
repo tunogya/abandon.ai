@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ABANDON.AI
+
+A living interface built on cellular automata and Three.js, where information emerges from noise.
+
+## Tech Stack
+
+- **Next.js 16.1** — React framework
+- **React 19** — UI library
+- **Three.js** — WebGL rendering
+- **TypeScript** — Type safety
+- **Tailwind CSS 4** — Styling
+- **Geist Pixel Fonts** — Typography system
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+# Install dependencies
+npm install
+
+# Run development server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+
+# Build for production
+npm run build
+
+# Start production server
+npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) to view the app.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Design Philosophy
 
-## Learn More
+### 1️⃣ World Model
 
-To learn more about Next.js, take a look at the following resources:
+- A fixed-resolution 2D grid of **cells** (not pixels)
+- Each cell is the minimum semantic unit
+- Cells have finite states: character / brightness / color / activation
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+**Key insight**: Once you accept "cells, not pixels" — everything else follows.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 2️⃣ Noise State (Default)
 
-## Deploy on Vercel
+- Every cell displays:
+  - Character set: `[0, 1, *, ., :, #, +]`
+  - Or: luminance blocks / dot matrix
+  - State changes over time (low correlation, local continuity)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+**Not a static background** — a living system.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 3️⃣ Information State
+
+- Same cells, but:
+  - Some cells "lock" into target patterns
+  - Others fade / deprioritize / weaken
+
+**Information doesn't overlay** — it emerges:
+
+```
+Noise → Organization → Meaning
+```
+
+### 4️⃣ Transition
+
+This is the soul of the UI.
+
+Not fade. Not slide. Instead:
+- Noise is **attracted**
+- **Captured**
+- **Constrained**
+- **Tamed**
+
+---
+
+## Typography
+
+Uses the **Geist Pixel font system** with semantic rules:
+
+- **Pixel Circle** — Brand identity, hero headlines
+- **Pixel Grid** — System data, metrics, numbers
+- **Pixel Line** — UI labels, badges, status
+- **Pixel Square** — Warnings, legal, authority
+- **Geist Sans** — All body text
+
+**Rule**: Maximum 2 Pixel variants per page. Pixel fonts for recognition, not reading.
+
+---
+
+## License
+
+MIT

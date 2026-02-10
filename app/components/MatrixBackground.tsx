@@ -17,6 +17,15 @@ export default function MatrixBackground() {
     const container = containerRef.current;
     if (!container) return;
 
+    const getPixelSquareFontFamily = () => {
+      const value = getComputedStyle(document.documentElement)
+        .getPropertyValue("--font-geist-pixel-square")
+        .trim();
+      return value || "monospace";
+    };
+
+    let fontFamily = getPixelSquareFontFamily();
+
     // ------------------------------------------------------------
     // Three.js setup
     // ------------------------------------------------------------
@@ -34,7 +43,7 @@ export default function MatrixBackground() {
     // ------------------------------------------------------------
     // Glyph atlas texture (characters packed into a single row)
     // ------------------------------------------------------------
-    function createGlyphAtlas(chars: string[], cellSize = 64) {
+    function createGlyphAtlas(chars: string[], cellSize = 64, family = "monospace") {
       const canvas = document.createElement("canvas");
       canvas.width = chars.length * cellSize;
       canvas.height = cellSize;
@@ -47,7 +56,7 @@ export default function MatrixBackground() {
       ctx.fillStyle = "white";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.font = `bold ${Math.floor(cellSize * 0.7)}px Menlo, Monaco, monospace`;
+      ctx.font = `bold ${Math.floor(cellSize * 0.7)}px ${family}`;
 
       for (let i = 0; i < chars.length; i += 1) {
         const x = i * cellSize + cellSize / 2;
@@ -64,7 +73,7 @@ export default function MatrixBackground() {
       return { canvas, texture };
     }
 
-    const glyphAtlas = createGlyphAtlas(CHARS);
+    let glyphAtlas = createGlyphAtlas(CHARS, 64, fontFamily);
 
     // ------------------------------------------------------------
     // Offscreen text mask (Canvas2D -> CanvasTexture)
@@ -114,11 +123,11 @@ export default function MatrixBackground() {
       textCtx.textBaseline = "middle";
 
       let fontSize = Math.floor(h * 0.65);
-      textCtx.font = `bold ${fontSize}px Menlo, Monaco, monospace`;
+      textCtx.font = `bold ${fontSize}px ${fontFamily}`;
       const metrics = textCtx.measureText(text);
       if (metrics.width > w * 0.9) {
         fontSize = Math.floor(fontSize * (w * 0.9 / metrics.width));
-        textCtx.font = `bold ${fontSize}px Menlo, Monaco, monospace`;
+        textCtx.font = `bold ${fontSize}px ${fontFamily}`;
       }
 
       textCtx.fillText(text, w / 2, h / 2);
@@ -308,6 +317,21 @@ export default function MatrixBackground() {
       uNoiseSpeed: { value: 0.7 },
       uTargetBrightness: { value: 0.95 },
     };
+
+    // Ensure the pixel-square font is used once loaded
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready
+        .then(() => {
+          const nextFamily = getPixelSquareFontFamily();
+          fontFamily = nextFamily;
+          const nextAtlas = createGlyphAtlas(CHARS, 64, fontFamily);
+          glyphAtlas.texture.dispose();
+          glyphAtlas = nextAtlas;
+          uniforms.uGlyphAtlas.value = glyphAtlas.texture;
+          updateTextMask(activeText);
+        })
+        .catch(() => {});
+    }
 
     const material = new THREE.ShaderMaterial({
       vertexShader,

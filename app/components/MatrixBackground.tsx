@@ -376,7 +376,7 @@ export default function MatrixBackground() {
     let inputBuffer = "";
 
     function triggerText(text: string) {
-      const safeText = (text || DEFAULT_TEXT).toUpperCase().slice(0, 32);
+      const safeText = (text || DEFAULT_TEXT).slice(0, 32);
       activeText = safeText;
       updateTextMask(safeText);
       uniforms.uTransition.value = 0;

@@ -3,7 +3,9 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
-const CELL_SIZE_PX = 18;
+const CELL_SIZE_PX = 20;
+const TEXT_SCALE = 8;
+const FONT_PX = 160;
 const NOISE_CHARS = ["0", "1", "+", "-", "·"];
 const BLOCK_CHAR = "█";
 const TARGET_CHARS = [BLOCK_CHAR];
@@ -25,6 +27,7 @@ export default function MatrixBackground() {
     };
 
     let fontFamily = getPixelSquareFontFamily();
+    let uniforms!: THREE.ShaderMaterial["uniforms"];
 
     // ------------------------------------------------------------
     // Three.js setup
@@ -80,6 +83,8 @@ export default function MatrixBackground() {
     // ------------------------------------------------------------
     let gridX = 1;
     let gridY = 1;
+    let maskCols = 1;
+    let maskRows = 1;
     const worldOffset = new THREE.Vector2(0, 0);
 
     const maskCanvas = document.createElement("canvas");
@@ -103,16 +108,36 @@ export default function MatrixBackground() {
 
       gridX = nextGridX;
       gridY = nextGridY;
-      maskCanvas.width = gridX;
-      maskCanvas.height = gridY;
-      textCanvas.width = gridX * 8;
-      textCanvas.height = gridY * 8;
+      return true;
+    }
+
+    function ensureMaskSizeForText(text: string) {
+      textCtx.font = `bold ${FONT_PX}px ${fontFamily}`;
+      const metrics = textCtx.measureText(text);
+      const textWidth = Math.ceil(metrics.width);
+      const textHeight = Math.ceil(FONT_PX * 1.2);
+      const padding = Math.ceil(FONT_PX * 0.6);
+      const neededCols = Math.max(1, Math.ceil((textWidth + padding * 2) / TEXT_SCALE));
+      const neededRows = Math.max(1, Math.ceil((textHeight + padding * 2) / TEXT_SCALE));
+      if (neededCols === maskCols && neededRows === maskRows) return false;
+
+      maskCols = neededCols;
+      maskRows = neededRows;
+      maskCanvas.width = maskCols;
+      maskCanvas.height = maskRows;
+      textCanvas.width = maskCols * TEXT_SCALE;
+      textCanvas.height = maskRows * TEXT_SCALE;
       maskTexture.needsUpdate = true;
       return true;
     }
 
     function updateTextMask(text: string) {
       if (!textCtx || !maskCtx) return;
+      const maskChanged = ensureMaskSizeForText(text);
+      if (maskChanged) {
+        uniforms.uMaskSize.value.set(maskCols, maskRows);
+        uniforms.uMaskCenter.value.set(maskCols * 0.5, maskRows * 0.5);
+      }
       const w = textCanvas.width;
       const h = textCanvas.height;
 
@@ -120,26 +145,20 @@ export default function MatrixBackground() {
       textCtx.fillStyle = "black";
       textCtx.fillRect(0, 0, w, h);
       textCtx.fillStyle = "white";
+      const fontSize = FONT_PX;
+
       textCtx.textAlign = "center";
       textCtx.textBaseline = "middle";
-
-      let fontSize = Math.floor(h * 0.65);
       textCtx.font = `bold ${fontSize}px ${fontFamily}`;
-      const metrics = textCtx.measureText(text);
-      if (metrics.width > w * 0.9) {
-        fontSize = Math.floor(fontSize * (w * 0.9 / metrics.width));
-        textCtx.font = `bold ${fontSize}px ${fontFamily}`;
-      }
-
       textCtx.fillText(text, w / 2, h / 2);
 
       // Downsample to grid resolution
-      maskCtx.clearRect(0, 0, gridX, gridY);
+      maskCtx.clearRect(0, 0, maskCols, maskRows);
       maskCtx.imageSmoothingEnabled = true;
-      maskCtx.drawImage(textCanvas, 0, 0, gridX, gridY);
+      maskCtx.drawImage(textCanvas, 0, 0, maskCols, maskRows);
 
       // Threshold for a crisp mask
-      const img = maskCtx.getImageData(0, 0, gridX, gridY);
+      const img = maskCtx.getImageData(0, 0, maskCols, maskRows);
       for (let i = 0; i < img.data.length; i += 4) {
         const v = img.data[i];
         const b = v > 30 ? 255 : 0;
@@ -153,7 +172,7 @@ export default function MatrixBackground() {
     }
 
     setGridFromViewport(window.innerWidth, window.innerHeight);
-    updateTextMask(DEFAULT_TEXT);
+    ensureMaskSizeForText(DEFAULT_TEXT);
     let activeText = DEFAULT_TEXT;
 
     // ------------------------------------------------------------
@@ -174,6 +193,7 @@ export default function MatrixBackground() {
       uniform sampler2D uTextMask;
       uniform vec2 uGrid;
       uniform vec2 uMaskSize;
+      uniform vec2 uMaskCenter;
       uniform vec2 uWorldOffset;
       uniform float uTime;
       uniform float uTransition;
@@ -260,8 +280,7 @@ export default function MatrixBackground() {
         vec2 cell = floor(gridUV);
         vec2 local = fract(gridUV);
         vec2 worldCell = cell + uWorldOffset;
-        vec2 maskUV = (worldCell + 0.5) / uMaskSize;
-        vec2 cellUV = (worldCell + 0.5) / uGrid;
+        vec2 maskUV = (worldCell + uMaskCenter + 0.5) / uMaskSize;
 
         // Sample text mask (1 inside, 0 outside)
         float inMask = step(0.0, maskUV.x) * step(0.0, maskUV.y)
@@ -309,11 +328,12 @@ export default function MatrixBackground() {
       }
     `;
 
-    const uniforms = {
+    uniforms = {
       uGlyphAtlas: { value: glyphAtlas.texture },
       uTextMask: { value: maskTexture },
       uGrid: { value: new THREE.Vector2(gridX, gridY) },
-      uMaskSize: { value: new THREE.Vector2(gridX, gridY) },
+      uMaskSize: { value: new THREE.Vector2(maskCols, maskRows) },
+      uMaskCenter: { value: new THREE.Vector2(maskCols * 0.5, maskRows * 0.5) },
       uWorldOffset: { value: worldOffset.clone() },
       uTime: { value: 0 },
       uTransition: { value: 0 },
@@ -326,6 +346,8 @@ export default function MatrixBackground() {
       uNoiseSpeed: { value: 0.7 },
       uTargetBrightness: { value: 0.95 },
     };
+
+    updateTextMask(activeText);
 
     // Ensure the pixel-square font is used once loaded
     if (document.fonts && document.fonts.ready) {
@@ -363,7 +385,8 @@ export default function MatrixBackground() {
 
       const gridChanged = setGridFromViewport(w, h);
       uniforms.uGrid.value.set(gridX, gridY);
-      uniforms.uMaskSize.value.set(gridX, gridY);
+      uniforms.uMaskSize.value.set(maskCols, maskRows);
+      uniforms.uMaskCenter.value.set(maskCols * 0.5, maskRows * 0.5);
       if (gridChanged) {
         updateTextMask(activeText);
       }

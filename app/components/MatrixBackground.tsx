@@ -80,6 +80,7 @@ export default function MatrixBackground() {
     // ------------------------------------------------------------
     let gridX = 1;
     let gridY = 1;
+    const worldOffset = new THREE.Vector2(0, 0);
 
     const maskCanvas = document.createElement("canvas");
     const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
@@ -172,6 +173,8 @@ export default function MatrixBackground() {
       uniform sampler2D uGlyphAtlas;
       uniform sampler2D uTextMask;
       uniform vec2 uGrid;
+      uniform vec2 uMaskSize;
+      uniform vec2 uWorldOffset;
       uniform float uTime;
       uniform float uTransition;
       uniform float uCharCount;
@@ -255,30 +258,34 @@ export default function MatrixBackground() {
         // Grid addressing
         vec2 gridUV = vUv * uGrid;
         vec2 cell = floor(gridUV);
-        vec2 cellUV = (cell + 0.5) / uGrid;
         vec2 local = fract(gridUV);
+        vec2 worldCell = cell + uWorldOffset;
+        vec2 maskUV = (worldCell + 0.5) / uMaskSize;
+        vec2 cellUV = (worldCell + 0.5) / uGrid;
 
         // Sample text mask (1 inside, 0 outside)
-        float mask = texture2D(uTextMask, cellUV).r;
+        float inMask = step(0.0, maskUV.x) * step(0.0, maskUV.y)
+          * step(maskUV.x, 1.0) * step(maskUV.y, 1.0);
+        float mask = texture2D(uTextMask, maskUV).r * inMask;
         mask = smoothstep(0.1, 0.9, mask);
 
         // Animated noise driving character choice + brightness
-        float n = snoise(vec3(cell / uGrid * uNoiseScale, uTime * uNoiseSpeed));
+        float n = snoise(vec3(worldCell / uGrid * uNoiseScale, uTime * uNoiseSpeed));
         float n01 = n * 0.5 + 0.5;
 
-        float flicker = snoise(vec3(cell / uGrid * (uNoiseScale * 1.7), uTime * (uNoiseSpeed * 1.4)));
+        float flicker = snoise(vec3(worldCell / uGrid * (uNoiseScale * 1.7), uTime * (uNoiseSpeed * 1.4)));
         float flicker01 = flicker * 0.5 + 0.5;
 
         float noiseIdx = floor(min(n01, 0.9999) * uNoiseCharCount);
         float noiseBrightness = mix(0.2, 1.0, n01) * mix(0.7, 1.1, flicker01);
 
         // Per-cell stagger for the transition
-        float cellJitter = snoise(vec3(cell / uGrid * (uNoiseScale * 0.6), 0.0));
+        float cellJitter = snoise(vec3(worldCell / uGrid * (uNoiseScale * 0.6), 0.0));
         float t = clamp(uTransition + (cellJitter * 0.2), 0.0, 1.0);
         t = smoothstep(0.0, 1.0, t) * mask;
 
         // Stable per-cell target character (picked from the target set)
-        float targetNoise = snoise(vec3(cell / uGrid * (uNoiseScale * 0.9), 1.234));
+        float targetNoise = snoise(vec3(worldCell / uGrid * (uNoiseScale * 0.9), 1.234));
         float target01 = targetNoise * 0.5 + 0.5;
         float targetLocal = floor(min(target01, 0.9999) * uTargetCharCount);
         float targetIdx = uTargetCharOffset + targetLocal;
@@ -306,6 +313,8 @@ export default function MatrixBackground() {
       uGlyphAtlas: { value: glyphAtlas.texture },
       uTextMask: { value: maskTexture },
       uGrid: { value: new THREE.Vector2(gridX, gridY) },
+      uMaskSize: { value: new THREE.Vector2(gridX, gridY) },
+      uWorldOffset: { value: worldOffset.clone() },
       uTime: { value: 0 },
       uTransition: { value: 0 },
       uCharCount: { value: CHARS.length },
@@ -354,6 +363,7 @@ export default function MatrixBackground() {
 
       const gridChanged = setGridFromViewport(w, h);
       uniforms.uGrid.value.set(gridX, gridY);
+      uniforms.uMaskSize.value.set(gridX, gridY);
       if (gridChanged) {
         updateTextMask(activeText);
       }
@@ -368,6 +378,40 @@ export default function MatrixBackground() {
 
     window.addEventListener("resize", resize);
     resize();
+
+    // ------------------------------------------------------------
+    // Drag to pan (world offset in cell units)
+    // ------------------------------------------------------------
+    let isDragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    function onPointerDown(event: PointerEvent) {
+      if (event.button !== 0) return;
+      isDragging = true;
+      lastX = event.clientX;
+      lastY = event.clientY;
+    }
+
+    function onPointerMove(event: PointerEvent) {
+      if (!isDragging) return;
+      const dx = event.clientX - lastX;
+      const dy = event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      worldOffset.x -= dx / CELL_SIZE_PX;
+      worldOffset.y += dy / CELL_SIZE_PX;
+      uniforms.uWorldOffset.value.set(worldOffset.x, worldOffset.y);
+    }
+
+    function onPointerUp() {
+      isDragging = false;
+    }
+
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
 
     // ------------------------------------------------------------
     // Text triggering logic (press any key to emerge text)
@@ -434,6 +478,10 @@ export default function MatrixBackground() {
 
     return () => {
       window.removeEventListener("resize", resize);
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
       window.removeEventListener("keydown", onKeyDown);
       window.cancelAnimationFrame(rafId);
 

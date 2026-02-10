@@ -6,7 +6,7 @@ import * as THREE from "three";
 const GRID_X = 120;
 const GRID_Y = 60;
 const CHARS = ["0", "1", "*", ".", ":", "#", "+"];
-const DEFAULT_TEXT = "HELLO";
+const DEFAULT_TEXT = "ABANDON, INC.";
 
 export default function MatrixBackground() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -86,6 +86,7 @@ export default function MatrixBackground() {
     maskTexture.wrapT = THREE.ClampToEdgeWrapping;
 
     function updateTextMask(text: string) {
+      if (!textCtx || !maskCtx) return;
       const w = textCanvas.width;
       const h = textCanvas.height;
 

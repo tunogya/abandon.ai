@@ -3,9 +3,10 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
-const CELL_SIZE_PX = 20;
+const CELL_SIZE_PX = 10;
 const DEFAULT_MESSAGE = "Hello";
 const GLYPH_DATA_URL = "/data/geist-pixel-square-23rows.json";
+const NOISE_CHARS = ["0", "1", "-", "+", "·"];
 
 type GlyphRecord = {
   char: string;
@@ -55,6 +56,13 @@ export default function MatrixBackground() {
     textTexture.wrapT = THREE.ClampToEdgeWrapping;
     textTexture.needsUpdate = true;
 
+    let noiseTexture = new THREE.DataTexture(new Uint8Array([0]), 1, 1, textureFormat);
+    noiseTexture.minFilter = THREE.NearestFilter;
+    noiseTexture.magFilter = THREE.NearestFilter;
+    noiseTexture.wrapS = THREE.ClampToEdgeWrapping;
+    noiseTexture.wrapT = THREE.ClampToEdgeWrapping;
+    noiseTexture.needsUpdate = true;
+
     // ------------------------------------------------------------
     // Grid / world state
     // ------------------------------------------------------------
@@ -65,6 +73,7 @@ export default function MatrixBackground() {
     let textWidth = 1;
     let textHeight = 1;
     let textReady = false;
+    let noiseCount = 1;
 
     function setGridFromViewport(width: number, height: number) {
       const nextGridX = Math.max(1, Math.floor(width / CELL_SIZE_PX));
@@ -96,6 +105,8 @@ export default function MatrixBackground() {
       uniform vec2 uTextSize;
       uniform sampler2D uTextTexture;
       uniform float uTextReady;
+      uniform sampler2D uNoiseAtlas;
+      uniform float uNoiseCount;
       uniform float uTime;
       uniform float uNoiseScale;
       uniform float uNoiseSpeed;
@@ -174,16 +185,20 @@ export default function MatrixBackground() {
         vec2 local = fract(gridUV);
         vec2 worldCell = cell + uWorldOffset;
 
+        float cellMask = step(0.08, local.x) * step(0.08, local.y)
+          * step(local.x, 0.92) * step(local.y, 0.92);
+
         float n = snoise(vec3(worldCell / uGrid * uNoiseScale, uTime * uNoiseSpeed));
         float n01 = n * 0.5 + 0.5;
 
         float flicker = snoise(vec3(worldCell / uGrid * (uNoiseScale * 1.7), uTime * (uNoiseSpeed * 1.4)));
         float flicker01 = flicker * 0.5 + 0.5;
 
-        float cellMask = step(0.08, local.x) * step(0.08, local.y)
-          * step(local.x, 0.92) * step(local.y, 0.92);
+        float idx = floor(min(n01, 0.9999) * uNoiseCount);
+        vec2 glyphUV = vec2((idx + local.x) / uNoiseCount, local.y);
+        float noiseGlyph = texture2D(uNoiseAtlas, glyphUV).r;
 
-        float base = mix(0.03, 0.18, n01) * mix(0.75, 1.1, flicker01);
+        float base = noiseGlyph * mix(0.05, 0.22, n01) * mix(0.75, 1.1, flicker01);
 
         float textValue = 0.0;
         if (uTextReady > 0.5) {
@@ -211,6 +226,8 @@ export default function MatrixBackground() {
       uTextSize: { value: new THREE.Vector2(textWidth, textHeight) },
       uTextTexture: { value: textTexture },
       uTextReady: { value: 0 },
+      uNoiseAtlas: { value: noiseTexture },
+      uNoiseCount: { value: noiseCount },
       uTime: { value: 0 },
       uNoiseScale: { value: 4.0 },
       uNoiseSpeed: { value: 0.7 },
@@ -358,6 +375,38 @@ export default function MatrixBackground() {
       return { width: totalWidth, height: rows, pixels };
     }
 
+    function buildNoiseAtlas(data: GlyphData, chars: string[]) {
+      const glyphMap = new Map<string, GlyphRecord>();
+      for (const glyph of data.glyphs) {
+        glyphMap.set(glyph.char, glyph);
+      }
+
+      const rows = data.meta?.rows || 23;
+      const glyphs = chars.map((char) => glyphMap.get(char));
+      const tileWidth = Math.max(
+        1,
+        ...glyphs.map((glyph) => (glyph ? glyph.width : 0))
+      );
+      const width = tileWidth * glyphs.length;
+      const pixels = new Uint8Array(width * rows);
+
+      for (let i = 0; i < glyphs.length; i += 1) {
+        const glyph = glyphs[i];
+        if (!glyph || glyph.width === 0) continue;
+        const offsetX = i * tileWidth + Math.floor((tileWidth - glyph.width) / 2);
+        for (let row = 0; row < rows; row += 1) {
+          const rowData = glyph.matrix[row] || [];
+          for (let col = 0; col < glyph.width; col += 1) {
+            if (rowData[col]) {
+              pixels[row * width + offsetX + col] = 255;
+            }
+          }
+        }
+      }
+
+      return { width, height: rows, pixels, count: glyphs.length };
+    }
+
     async function loadTextTexture(message: string) {
       try {
         const res = await fetch(GLYPH_DATA_URL);
@@ -366,6 +415,7 @@ export default function MatrixBackground() {
         }
         const data = (await res.json()) as GlyphData;
         const { width, height, pixels } = buildTextPixels(message, data);
+        const noiseAtlas = buildNoiseAtlas(data, NOISE_CHARS);
         if (disposed) return;
 
         const nextTexture = new THREE.DataTexture(pixels, width, height, textureFormat);
@@ -385,6 +435,24 @@ export default function MatrixBackground() {
         uniforms.uTextSize.value.set(textWidth, textHeight);
         uniforms.uTextReady.value = 1;
         centerTextIfReady();
+
+        const nextNoise = new THREE.DataTexture(
+          noiseAtlas.pixels,
+          noiseAtlas.width,
+          noiseAtlas.height,
+          textureFormat
+        );
+        nextNoise.minFilter = THREE.NearestFilter;
+        nextNoise.magFilter = THREE.NearestFilter;
+        nextNoise.wrapS = THREE.ClampToEdgeWrapping;
+        nextNoise.wrapT = THREE.ClampToEdgeWrapping;
+        nextNoise.needsUpdate = true;
+
+        noiseTexture.dispose();
+        noiseTexture = nextNoise;
+        noiseCount = noiseAtlas.count;
+        uniforms.uNoiseAtlas.value = noiseTexture;
+        uniforms.uNoiseCount.value = noiseCount;
       } catch (err) {
         console.warn("Failed to load glyph data:", err);
       }
@@ -404,6 +472,7 @@ export default function MatrixBackground() {
       material.dispose();
       plane.geometry.dispose();
       textTexture.dispose();
+      noiseTexture.dispose();
       renderer.dispose();
 
       if (renderer.domElement.parentElement) {

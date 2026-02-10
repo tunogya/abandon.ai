@@ -4,7 +4,25 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
 const CELL_SIZE_PX = 20;
-const CHARS = ["0", "1", "+", "-", "·"];
+const DEFAULT_MESSAGE = "Hello";
+const GLYPH_DATA_URL = "/data/geist-pixel-square-23rows.json";
+
+type GlyphRecord = {
+  char: string;
+  codepoint: string;
+  width: number;
+  height: number;
+  matrix: number[][];
+};
+
+type GlyphData = {
+  meta: {
+    rows: number;
+    font: string;
+    source: string;
+  };
+  glyphs: GlyphRecord[];
+};
 
 export default function MatrixBackground() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -13,14 +31,7 @@ export default function MatrixBackground() {
     const container = containerRef.current;
     if (!container) return;
 
-    const getPixelSquareFontFamily = () => {
-      const value = getComputedStyle(document.documentElement)
-        .getPropertyValue("--font-geist-pixel-square")
-        .trim();
-      return value || "monospace";
-    };
-
-    let fontFamily = getPixelSquareFontFamily();
+    let disposed = false;
 
     // ------------------------------------------------------------
     // Three.js setup
@@ -36,40 +47,13 @@ export default function MatrixBackground() {
     const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10);
     camera.position.z = 1;
 
-    // ------------------------------------------------------------
-    // Glyph atlas texture (characters packed into a single row)
-    // ------------------------------------------------------------
-    function createGlyphAtlas(chars: string[], cellSize = 64, family = "monospace") {
-      const canvas = document.createElement("canvas");
-      canvas.width = chars.length * cellSize;
-      canvas.height = cellSize;
-
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Failed to create glyph atlas context");
-
-      ctx.fillStyle = "black";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "white";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.font = `bold ${Math.floor(cellSize * 0.7)}px ${family}`;
-
-      for (let i = 0; i < chars.length; i += 1) {
-        const x = i * cellSize + cellSize / 2;
-        const y = cellSize / 2;
-        ctx.fillText(chars[i], x, y);
-      }
-
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.minFilter = THREE.NearestFilter;
-      texture.magFilter = THREE.NearestFilter;
-      texture.wrapS = THREE.ClampToEdgeWrapping;
-      texture.wrapT = THREE.ClampToEdgeWrapping;
-
-      return { canvas, texture };
-    }
-
-    let glyphAtlas = createGlyphAtlas(CHARS, 64, fontFamily);
+    const textureFormat = THREE.RedFormat;
+    let textTexture = new THREE.DataTexture(new Uint8Array([0]), 1, 1, textureFormat);
+    textTexture.minFilter = THREE.NearestFilter;
+    textTexture.magFilter = THREE.NearestFilter;
+    textTexture.wrapS = THREE.ClampToEdgeWrapping;
+    textTexture.wrapT = THREE.ClampToEdgeWrapping;
+    textTexture.needsUpdate = true;
 
     // ------------------------------------------------------------
     // Grid / world state
@@ -77,6 +61,10 @@ export default function MatrixBackground() {
     let gridX = 1;
     let gridY = 1;
     const worldOffset = new THREE.Vector2(0, 0);
+    const textOrigin = new THREE.Vector2(0, 0);
+    let textWidth = 1;
+    let textHeight = 1;
+    let textReady = false;
 
     function setGridFromViewport(width: number, height: number) {
       const nextGridX = Math.max(1, Math.floor(width / CELL_SIZE_PX));
@@ -102,11 +90,13 @@ export default function MatrixBackground() {
     const fragmentShader = /* glsl */ `
       precision highp float;
 
-      uniform sampler2D uGlyphAtlas;
       uniform vec2 uGrid;
       uniform vec2 uWorldOffset;
+      uniform vec2 uTextOrigin;
+      uniform vec2 uTextSize;
+      uniform sampler2D uTextTexture;
+      uniform float uTextReady;
       uniform float uTime;
-      uniform float uCharCount;
       uniform float uNoiseScale;
       uniform float uNoiseSpeed;
 
@@ -190,40 +180,41 @@ export default function MatrixBackground() {
         float flicker = snoise(vec3(worldCell / uGrid * (uNoiseScale * 1.7), uTime * (uNoiseSpeed * 1.4)));
         float flicker01 = flicker * 0.5 + 0.5;
 
-        float idx = floor(min(n01, 0.9999) * uCharCount);
-        float brightness = mix(0.2, 1.0, n01) * mix(0.7, 1.1, flicker01);
+        float cellMask = step(0.08, local.x) * step(0.08, local.y)
+          * step(local.x, 0.92) * step(local.y, 0.92);
 
-        vec2 glyphUV = vec2((idx + local.x) / uCharCount, 1.0 - local.y);
-        float glyph = texture2D(uGlyphAtlas, glyphUV).r;
+        float base = mix(0.03, 0.18, n01) * mix(0.75, 1.1, flicker01);
 
-        vec3 color = vec3(brightness) * glyph;
+        float textValue = 0.0;
+        if (uTextReady > 0.5) {
+          vec2 textCell = worldCell - uTextOrigin;
+          if (textCell.x >= 0.0 && textCell.y >= 0.0
+              && textCell.x < uTextSize.x && textCell.y < uTextSize.y) {
+            vec2 texUV = vec2(
+              (textCell.x + 0.5) / uTextSize.x,
+              (textCell.y + 0.5) / uTextSize.y
+            );
+            textValue = texture2D(uTextTexture, texUV).r;
+          }
+        }
+
+        float value = max(base, textValue);
+        vec3 color = vec3(value) * cellMask;
         gl_FragColor = vec4(color, 1.0);
       }
     `;
 
     const uniforms = {
-      uGlyphAtlas: { value: glyphAtlas.texture },
       uGrid: { value: new THREE.Vector2(gridX, gridY) },
       uWorldOffset: { value: worldOffset.clone() },
+      uTextOrigin: { value: textOrigin.clone() },
+      uTextSize: { value: new THREE.Vector2(textWidth, textHeight) },
+      uTextTexture: { value: textTexture },
+      uTextReady: { value: 0 },
       uTime: { value: 0 },
-      uCharCount: { value: CHARS.length },
       uNoiseScale: { value: 4.0 },
       uNoiseSpeed: { value: 0.7 },
     };
-
-    // Ensure the pixel-square font is used once loaded
-    if (document.fonts && document.fonts.ready) {
-      document.fonts.ready
-        .then(() => {
-          const nextFamily = getPixelSquareFontFamily();
-          fontFamily = nextFamily;
-          const nextAtlas = createGlyphAtlas(CHARS, 64, fontFamily);
-          glyphAtlas.texture.dispose();
-          glyphAtlas = nextAtlas;
-          uniforms.uGlyphAtlas.value = glyphAtlas.texture;
-        })
-        .catch(() => {});
-    }
 
     const material = new THREE.ShaderMaterial({
       vertexShader,
@@ -237,6 +228,14 @@ export default function MatrixBackground() {
     // ------------------------------------------------------------
     // Resize handling (keeps plane filling the viewport)
     // ------------------------------------------------------------
+    function centerTextIfReady() {
+      if (!textReady) return;
+      const originX = Math.floor(gridX / 2 - textWidth / 2);
+      const originY = Math.floor(gridY / 2 - textHeight / 2);
+      textOrigin.set(originX, originY);
+      uniforms.uTextOrigin.value.set(originX, originY);
+    }
+
     function resize() {
       const w = window.innerWidth;
       const h = window.innerHeight;
@@ -246,6 +245,7 @@ export default function MatrixBackground() {
 
       setGridFromViewport(w, h);
       uniforms.uGrid.value.set(gridX, gridY);
+      centerTextIfReady();
 
       const distance = camera.position.z;
       const vFov = THREE.MathUtils.degToRad(camera.fov);
@@ -306,7 +306,94 @@ export default function MatrixBackground() {
 
     animate();
 
+    function buildTextPixels(message: string, data: GlyphData) {
+      const glyphMap = new Map<string, GlyphRecord>();
+      for (const glyph of data.glyphs) {
+        glyphMap.set(glyph.char, glyph);
+      }
+
+      const rows = data.meta?.rows || 23;
+      const gap = 1;
+      const chars = Array.from(message);
+      const glyphs = chars.map((char) => glyphMap.get(char));
+
+      let totalWidth = 0;
+      for (let i = 0; i < glyphs.length; i += 1) {
+        const glyph = glyphs[i];
+        totalWidth += glyph ? glyph.width : 0;
+        if (i < glyphs.length - 1) totalWidth += gap;
+      }
+      totalWidth = Math.max(1, totalWidth);
+
+      const grid = Array.from({ length: rows }, () => new Array(totalWidth).fill(0));
+      let offsetX = 0;
+      for (let i = 0; i < glyphs.length; i += 1) {
+        const glyph = glyphs[i];
+        if (glyph) {
+          for (let row = 0; row < rows; row += 1) {
+            const rowData = glyph.matrix[row] || [];
+            for (let col = 0; col < glyph.width; col += 1) {
+              if (rowData[col]) {
+                grid[row][offsetX + col] = 1;
+              }
+            }
+          }
+          offsetX += glyph.width;
+        }
+        if (i < glyphs.length - 1) {
+          offsetX += gap;
+        }
+      }
+
+      const pixels = new Uint8Array(totalWidth * rows);
+      for (let row = 0; row < rows; row += 1) {
+        const rowData = grid[row];
+        for (let col = 0; col < totalWidth; col += 1) {
+          if (rowData[col]) {
+            pixels[row * totalWidth + col] = 255;
+          }
+        }
+      }
+
+      return { width: totalWidth, height: rows, pixels };
+    }
+
+    async function loadTextTexture(message: string) {
+      try {
+        const res = await fetch(GLYPH_DATA_URL);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status} loading ${GLYPH_DATA_URL}`);
+        }
+        const data = (await res.json()) as GlyphData;
+        const { width, height, pixels } = buildTextPixels(message, data);
+        if (disposed) return;
+
+        const nextTexture = new THREE.DataTexture(pixels, width, height, textureFormat);
+        nextTexture.minFilter = THREE.NearestFilter;
+        nextTexture.magFilter = THREE.NearestFilter;
+        nextTexture.wrapS = THREE.ClampToEdgeWrapping;
+        nextTexture.wrapT = THREE.ClampToEdgeWrapping;
+        nextTexture.needsUpdate = true;
+
+        textTexture.dispose();
+        textTexture = nextTexture;
+        textWidth = width;
+        textHeight = height;
+        textReady = true;
+
+        uniforms.uTextTexture.value = textTexture;
+        uniforms.uTextSize.value.set(textWidth, textHeight);
+        uniforms.uTextReady.value = 1;
+        centerTextIfReady();
+      } catch (err) {
+        console.warn("Failed to load glyph data:", err);
+      }
+    }
+
+    loadTextTexture(DEFAULT_MESSAGE);
+
     return () => {
+      disposed = true;
       window.removeEventListener("resize", resize);
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
@@ -316,7 +403,7 @@ export default function MatrixBackground() {
 
       material.dispose();
       plane.geometry.dispose();
-      glyphAtlas.texture.dispose();
+      textTexture.dispose();
       renderer.dispose();
 
       if (renderer.domElement.parentElement) {

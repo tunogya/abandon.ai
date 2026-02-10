@@ -297,7 +297,7 @@ function glyphToMatrix({
   rows,
   samples,
   cellSize,
-  ascent,
+  yMax,
   curveSteps,
 }) {
   const path = glyph.getPath(0, 0, fontSize);
@@ -323,7 +323,7 @@ function glyphToMatrix({
   const matrix = [];
   for (let row = 0; row < rows; row += 1) {
     const rowData = new Array(cols).fill(0);
-    const cellTop = ascent - row * cellSize;
+    const cellTop = yMax - row * cellSize;
     const cellBottom = cellTop - cellSize;
 
     for (let col = 0; col < cols; col += 1) {
@@ -360,6 +360,27 @@ function codepointHex(char) {
     return "U+0000";
   }
   return `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+}
+
+function getFontYBounds(font, chars) {
+  let yMin = Infinity;
+  let yMax = -Infinity;
+
+  for (const char of chars) {
+    const glyph = font.charToGlyph(char);
+    const path = glyph.getPath(0, 0, font.unitsPerEm);
+    if (!path.commands || path.commands.length === 0) continue;
+    const box = path.getBoundingBox();
+    if (!Number.isFinite(box.y1) || !Number.isFinite(box.y2)) continue;
+    yMin = Math.min(yMin, box.y1);
+    yMax = Math.max(yMax, box.y2);
+  }
+
+  if (!Number.isFinite(yMin) || !Number.isFinite(yMax) || yMin === yMax) {
+    return { yMin: font.descender, yMax: font.ascender };
+  }
+
+  return { yMin, yMax };
 }
 
 async function main() {
@@ -436,13 +457,13 @@ async function main() {
     charList = getAllCharsFromFont(font);
   }
 
-  const rows = Number.isFinite(opts.rows) && opts.rows > 0 ? opts.rows : DEFAULT_ROWS;
+  const rows =
+    Number.isFinite(opts.rows) && opts.rows > 0 ? opts.rows : DEFAULT_ROWS;
   const samples =
     Number.isFinite(opts.samples) && opts.samples > 0 ? opts.samples : DEFAULT_SAMPLES;
 
-  const ascent = font.ascender;
-  const descent = font.descender;
-  const cellSize = (ascent - descent) / rows;
+  const { yMin, yMax } = getFontYBounds(font, charList);
+  const cellSize = (yMax - yMin) / rows;
   const curveSteps = 10;
 
   const glyphs = [];
@@ -454,7 +475,7 @@ async function main() {
       rows,
       samples,
       cellSize,
-      ascent,
+      yMax,
       curveSteps,
     });
     glyphs.push({

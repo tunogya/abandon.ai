@@ -3,9 +3,10 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
-const GRID_X = 120;
-const GRID_Y = 60;
-const CHARS = ["0", "1", "*", ".", ":", "#", "+"];
+const CELL_SIZE_PX = 20;
+const NOISE_CHARS = ["0", "1", "+", "-", "·"];
+const TARGET_CHARS = ["█"];
+const CHARS = [...NOISE_CHARS, ...TARGET_CHARS];
 const DEFAULT_TEXT = "ABANDON, INC.";
 
 export default function MatrixBackground() {
@@ -67,15 +68,14 @@ export default function MatrixBackground() {
     // ------------------------------------------------------------
     // Offscreen text mask (Canvas2D -> CanvasTexture)
     // ------------------------------------------------------------
+    let gridX = 1;
+    let gridY = 1;
+
     const maskCanvas = document.createElement("canvas");
-    maskCanvas.width = GRID_X;
-    maskCanvas.height = GRID_Y;
     const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
     if (!maskCtx) throw new Error("Failed to create mask context");
 
     const textCanvas = document.createElement("canvas");
-    textCanvas.width = GRID_X * 8;
-    textCanvas.height = GRID_Y * 8;
     const textCtx = textCanvas.getContext("2d");
     if (!textCtx) throw new Error("Failed to create text context");
 
@@ -84,6 +84,21 @@ export default function MatrixBackground() {
     maskTexture.magFilter = THREE.NearestFilter;
     maskTexture.wrapS = THREE.ClampToEdgeWrapping;
     maskTexture.wrapT = THREE.ClampToEdgeWrapping;
+
+    function setGridFromViewport(width: number, height: number) {
+      const nextGridX = Math.max(1, Math.floor(width / CELL_SIZE_PX));
+      const nextGridY = Math.max(1, Math.floor(height / CELL_SIZE_PX));
+      if (nextGridX === gridX && nextGridY === gridY) return false;
+
+      gridX = nextGridX;
+      gridY = nextGridY;
+      maskCanvas.width = gridX;
+      maskCanvas.height = gridY;
+      textCanvas.width = gridX * 8;
+      textCanvas.height = gridY * 8;
+      maskTexture.needsUpdate = true;
+      return true;
+    }
 
     function updateTextMask(text: string) {
       if (!textCtx || !maskCtx) return;
@@ -108,12 +123,12 @@ export default function MatrixBackground() {
       textCtx.fillText(text, w / 2, h / 2);
 
       // Downsample to grid resolution
-      maskCtx.clearRect(0, 0, GRID_X, GRID_Y);
+      maskCtx.clearRect(0, 0, gridX, gridY);
       maskCtx.imageSmoothingEnabled = true;
-      maskCtx.drawImage(textCanvas, 0, 0, GRID_X, GRID_Y);
+      maskCtx.drawImage(textCanvas, 0, 0, gridX, gridY);
 
       // Threshold for a crisp mask
-      const img = maskCtx.getImageData(0, 0, GRID_X, GRID_Y);
+      const img = maskCtx.getImageData(0, 0, gridX, gridY);
       for (let i = 0; i < img.data.length; i += 4) {
         const v = img.data[i];
         const b = v > 30 ? 255 : 0;
@@ -126,7 +141,9 @@ export default function MatrixBackground() {
       maskTexture.needsUpdate = true;
     }
 
+    setGridFromViewport(window.innerWidth, window.innerHeight);
     updateTextMask(DEFAULT_TEXT);
+    let activeText = DEFAULT_TEXT;
 
     // ------------------------------------------------------------
     // Shader setup (noise + grid + text mask blend)
@@ -148,7 +165,9 @@ export default function MatrixBackground() {
       uniform float uTime;
       uniform float uTransition;
       uniform float uCharCount;
-      uniform float uTargetChar;
+      uniform float uNoiseCharCount;
+      uniform float uTargetCharOffset;
+      uniform float uTargetCharCount;
       uniform float uNoiseScale;
       uniform float uNoiseSpeed;
       uniform float uTargetBrightness;
@@ -239,7 +258,7 @@ export default function MatrixBackground() {
         float flicker = snoise(vec3(cell / uGrid * (uNoiseScale * 1.7), uTime * (uNoiseSpeed * 1.4)));
         float flicker01 = flicker * 0.5 + 0.5;
 
-        float noiseIdx = floor(n01 * uCharCount);
+        float noiseIdx = floor(min(n01, 0.9999) * uNoiseCharCount);
         float noiseBrightness = mix(0.2, 1.0, n01) * mix(0.7, 1.1, flicker01);
 
         // Per-cell stagger for the transition
@@ -247,8 +266,14 @@ export default function MatrixBackground() {
         float t = clamp(uTransition + (cellJitter * 0.2), 0.0, 1.0);
         t = smoothstep(0.0, 1.0, t) * mask;
 
+        // Stable per-cell target character (picked from the target set)
+        float targetNoise = snoise(vec3(cell / uGrid * (uNoiseScale * 0.9), 1.234));
+        float target01 = targetNoise * 0.5 + 0.5;
+        float targetLocal = floor(min(target01, 0.9999) * uTargetCharCount);
+        float targetIdx = uTargetCharOffset + targetLocal;
+
         // Interpolate between noise and target character
-        float charIdx = floor(mix(noiseIdx, uTargetChar, t) + 0.5);
+        float charIdx = floor(mix(noiseIdx, targetIdx, t) + 0.5);
         float finalBrightness = mix(noiseBrightness, uTargetBrightness, t);
 
         // Sample the glyph atlas for the selected character
@@ -263,11 +288,13 @@ export default function MatrixBackground() {
     const uniforms = {
       uGlyphAtlas: { value: glyphAtlas.texture },
       uTextMask: { value: maskTexture },
-      uGrid: { value: new THREE.Vector2(GRID_X, GRID_Y) },
+      uGrid: { value: new THREE.Vector2(gridX, gridY) },
       uTime: { value: 0 },
       uTransition: { value: 0 },
       uCharCount: { value: CHARS.length },
-      uTargetChar: { value: CHARS.indexOf("#") },
+      uNoiseCharCount: { value: NOISE_CHARS.length },
+      uTargetCharOffset: { value: NOISE_CHARS.length },
+      uTargetCharCount: { value: TARGET_CHARS.length },
       uNoiseScale: { value: 4.0 },
       uNoiseSpeed: { value: 0.7 },
       uTargetBrightness: { value: 0.95 },
@@ -292,6 +319,12 @@ export default function MatrixBackground() {
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
 
+      const gridChanged = setGridFromViewport(w, h);
+      uniforms.uGrid.value.set(gridX, gridY);
+      if (gridChanged) {
+        updateTextMask(activeText);
+      }
+
       // Scale the plane to fill the view at z=0
       const distance = camera.position.z;
       const vFov = THREE.MathUtils.degToRad(camera.fov);
@@ -311,6 +344,7 @@ export default function MatrixBackground() {
 
     function triggerText(text: string) {
       const safeText = (text || DEFAULT_TEXT).toUpperCase().slice(0, 32);
+      activeText = safeText;
       updateTextMask(safeText);
       uniforms.uTransition.value = 0;
       transitioning = true;

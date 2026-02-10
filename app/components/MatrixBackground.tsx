@@ -68,7 +68,6 @@ export default function MatrixBackground() {
     // ------------------------------------------------------------
     let gridX = 1;
     let gridY = 1;
-    const worldOffset = new THREE.Vector2(0, 0);
     const textOrigin = new THREE.Vector2(0, 0);
     let textWidth = 1;
     let textHeight = 1;
@@ -100,7 +99,6 @@ export default function MatrixBackground() {
       precision highp float;
 
       uniform vec2 uGrid;
-      uniform vec2 uWorldOffset;
       uniform vec2 uTextOrigin;
       uniform vec2 uTextSize;
       uniform sampler2D uTextTexture;
@@ -183,7 +181,7 @@ export default function MatrixBackground() {
         vec2 gridUV = vUv * uGrid;
         vec2 cell = floor(gridUV);
         vec2 local = fract(gridUV);
-        vec2 worldCell = cell + uWorldOffset;
+        vec2 worldCell = cell;
 
         float cellMask = step(0.08, local.x) * step(0.08, local.y)
           * step(local.x, 0.92) * step(local.y, 0.92);
@@ -221,7 +219,6 @@ export default function MatrixBackground() {
 
     const uniforms = {
       uGrid: { value: new THREE.Vector2(gridX, gridY) },
-      uWorldOffset: { value: worldOffset.clone() },
       uTextOrigin: { value: textOrigin.clone() },
       uTextSize: { value: new THREE.Vector2(textWidth, textHeight) },
       uTextTexture: { value: textTexture },
@@ -273,40 +270,6 @@ export default function MatrixBackground() {
 
     window.addEventListener("resize", resize);
     resize();
-
-    // ------------------------------------------------------------
-    // Drag to pan (world offset in cell units)
-    // ------------------------------------------------------------
-    let isDragging = false;
-    let lastX = 0;
-    let lastY = 0;
-
-    function onPointerDown(event: PointerEvent) {
-      if (event.button !== 0) return;
-      isDragging = true;
-      lastX = event.clientX;
-      lastY = event.clientY;
-    }
-
-    function onPointerMove(event: PointerEvent) {
-      if (!isDragging) return;
-      const dx = event.clientX - lastX;
-      const dy = event.clientY - lastY;
-      lastX = event.clientX;
-      lastY = event.clientY;
-      worldOffset.x -= dx / CELL_SIZE_PX;
-      worldOffset.y += dy / CELL_SIZE_PX;
-      uniforms.uWorldOffset.value.set(worldOffset.x, worldOffset.y);
-    }
-
-    function onPointerUp() {
-      isDragging = false;
-    }
-
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-    window.addEventListener("pointercancel", onPointerUp);
 
     // ------------------------------------------------------------
     // Animation loop
@@ -463,10 +426,6 @@ export default function MatrixBackground() {
     return () => {
       disposed = true;
       window.removeEventListener("resize", resize);
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
       window.cancelAnimationFrame(rafId);
 
       material.dispose();

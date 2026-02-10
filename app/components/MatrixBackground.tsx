@@ -5,7 +5,8 @@ import * as THREE from "three";
 
 const CELL_SIZE_PX = 18;
 const NOISE_CHARS = ["0", "1", "+", "-", "·"];
-const TARGET_CHARS = ["█"];
+const BLOCK_CHAR = "█";
+const TARGET_CHARS = [BLOCK_CHAR];
 const CHARS = [...NOISE_CHARS, ...TARGET_CHARS];
 const DEFAULT_TEXT = "ABANDON, INC.";
 
@@ -168,6 +169,7 @@ export default function MatrixBackground() {
       uniform float uNoiseCharCount;
       uniform float uTargetCharOffset;
       uniform float uTargetCharCount;
+      uniform float uBlockCharIndex;
       uniform float uNoiseScale;
       uniform float uNoiseSpeed;
       uniform float uTargetBrightness;
@@ -276,9 +278,15 @@ export default function MatrixBackground() {
         float charIdx = floor(mix(noiseIdx, targetIdx, t) + 0.5);
         float finalBrightness = mix(noiseBrightness, uTargetBrightness, t);
 
-        // Sample the glyph atlas for the selected character
+        // Sample the glyph atlas (or draw a solid block for the block char)
         vec2 glyphUV = vec2((charIdx + local.x) / uCharCount, 1.0 - local.y);
         float glyph = texture2D(uGlyphAtlas, glyphUV).r;
+
+        float isBlock = 1.0 - step(0.5, abs(charIdx - uBlockCharIndex));
+        float margin = 0.02;
+        float block = step(margin, local.x) * step(margin, local.y)
+          * step(local.x, 1.0 - margin) * step(local.y, 1.0 - margin);
+        glyph = mix(glyph, block, isBlock);
 
         vec3 color = vec3(finalBrightness) * glyph;
         gl_FragColor = vec4(color, 1.0);
@@ -295,6 +303,7 @@ export default function MatrixBackground() {
       uNoiseCharCount: { value: NOISE_CHARS.length },
       uTargetCharOffset: { value: NOISE_CHARS.length },
       uTargetCharCount: { value: TARGET_CHARS.length },
+      uBlockCharIndex: { value: CHARS.indexOf(BLOCK_CHAR) },
       uNoiseScale: { value: 4.0 },
       uNoiseSpeed: { value: 0.7 },
       uTargetBrightness: { value: 0.95 },

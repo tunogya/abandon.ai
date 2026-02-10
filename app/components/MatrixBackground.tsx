@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
-const CELL_SIZE_PX = 20;
+const CELL_SIZE_PX = 18;
 const NOISE_CHARS = ["0", "1", "+", "-", "·"];
 const TARGET_CHARS = ["█"];
 const CHARS = [...NOISE_CHARS, ...TARGET_CHARS];

@@ -7,6 +7,8 @@ const CELL_SIZE_PX = 10;
 const DEFAULT_MESSAGE = "Hello";
 const GLYPH_DATA_URL = "/data/geist-pixel-square-23rows.json";
 const NOISE_CHARS = ["0", "1", "-", "+", "·"];
+const NOISE_FONT_FAMILY =
+  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace";
 
 type GlyphRecord = {
   char: string;
@@ -338,36 +340,46 @@ export default function MatrixBackground() {
       return { width: totalWidth, height: rows, pixels };
     }
 
-    function buildNoiseAtlas(data: GlyphData, chars: string[]) {
-      const glyphMap = new Map<string, GlyphRecord>();
-      for (const glyph of data.glyphs) {
-        glyphMap.set(glyph.char, glyph);
+    function createNoiseAtlas(chars: string[], cellSize = 64, family = NOISE_FONT_FAMILY) {
+      const canvas = document.createElement("canvas");
+      canvas.width = chars.length * cellSize;
+      canvas.height = cellSize;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Failed to create noise atlas context");
+
+      ctx.fillStyle = "black";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "white";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `bold ${Math.floor(cellSize * 0.7)}px ${family}`;
+
+      for (let i = 0; i < chars.length; i += 1) {
+        const x = i * cellSize + cellSize / 2;
+        const y = cellSize / 2;
+        ctx.fillText(chars[i], x, y);
       }
 
-      const rows = data.meta?.rows || 23;
-      const glyphs = chars.map((char) => glyphMap.get(char));
-      const tileWidth = Math.max(
-        1,
-        ...glyphs.map((glyph) => (glyph ? glyph.width : 0))
+      const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const pixels = new Uint8Array(canvas.width * canvas.height);
+      for (let i = 0; i < pixels.length; i += 1) {
+        pixels[i] = image.data[i * 4];
+      }
+
+      const texture = new THREE.DataTexture(
+        pixels,
+        canvas.width,
+        canvas.height,
+        textureFormat
       );
-      const width = tileWidth * glyphs.length;
-      const pixels = new Uint8Array(width * rows);
+      texture.minFilter = THREE.NearestFilter;
+      texture.magFilter = THREE.NearestFilter;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.needsUpdate = true;
 
-      for (let i = 0; i < glyphs.length; i += 1) {
-        const glyph = glyphs[i];
-        if (!glyph || glyph.width === 0) continue;
-        const offsetX = i * tileWidth + Math.floor((tileWidth - glyph.width) / 2);
-        for (let row = 0; row < rows; row += 1) {
-          const rowData = glyph.matrix[row] || [];
-          for (let col = 0; col < glyph.width; col += 1) {
-            if (rowData[col]) {
-              pixels[row * width + offsetX + col] = 255;
-            }
-          }
-        }
-      }
-
-      return { width, height: rows, pixels, count: glyphs.length };
+      return { texture, count: chars.length };
     }
 
     async function loadTextTexture(message: string) {
@@ -378,7 +390,6 @@ export default function MatrixBackground() {
         }
         const data = (await res.json()) as GlyphData;
         const { width, height, pixels } = buildTextPixels(message, data);
-        const noiseAtlas = buildNoiseAtlas(data, NOISE_CHARS);
         if (disposed) return;
 
         const nextTexture = new THREE.DataTexture(pixels, width, height, textureFormat);
@@ -399,20 +410,9 @@ export default function MatrixBackground() {
         uniforms.uTextReady.value = 1;
         centerTextIfReady();
 
-        const nextNoise = new THREE.DataTexture(
-          noiseAtlas.pixels,
-          noiseAtlas.width,
-          noiseAtlas.height,
-          textureFormat
-        );
-        nextNoise.minFilter = THREE.NearestFilter;
-        nextNoise.magFilter = THREE.NearestFilter;
-        nextNoise.wrapS = THREE.ClampToEdgeWrapping;
-        nextNoise.wrapT = THREE.ClampToEdgeWrapping;
-        nextNoise.needsUpdate = true;
-
+        const noiseAtlas = createNoiseAtlas(NOISE_CHARS);
         noiseTexture.dispose();
-        noiseTexture = nextNoise;
+        noiseTexture = noiseAtlas.texture;
         noiseCount = noiseAtlas.count;
         uniforms.uNoiseAtlas.value = noiseTexture;
         uniforms.uNoiseCount.value = noiseCount;

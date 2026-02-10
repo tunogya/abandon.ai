@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
 const CELL_SIZE_PX = 10;
-const DEFAULT_MESSAGE = "Hello";
+const DEFAULT_MESSAGE = "404";
 const GLYPH_DATA_URL = "/data/geist-pixel-square-23rows.json";
 const NOISE_CHARS = ["0", "1", "-", "+", "·"];
 const NOISE_FONT_FAMILY =
@@ -27,7 +27,11 @@ type GlyphData = {
   glyphs: GlyphRecord[];
 };
 
-export default function MatrixBackground() {
+type MatrixBackgroundProps = {
+  message?: string;
+};
+
+export default function MatrixBackground({ message }: MatrixBackgroundProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -421,7 +425,7 @@ export default function MatrixBackground() {
       }
     }
 
-    loadTextTexture(DEFAULT_MESSAGE);
+    loadTextTexture(message ?? DEFAULT_MESSAGE);
 
     return () => {
       disposed = true;
@@ -438,7 +442,7 @@ export default function MatrixBackground() {
         renderer.domElement.parentElement.removeChild(renderer.domElement);
       }
     };
-  }, []);
+  }, [message]);
 
   return (
     <div
